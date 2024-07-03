@@ -1,5 +1,5 @@
-# mypy: allow-untyped-defs
 # ${generated_comment}
+# mypy: allow-untyped-defs
 
 from typing import (
     Any,
@@ -36,6 +36,10 @@ from torch.types import (
     _size,
     Number,
 )
+
+${return_types___all__}
+
+def pytree_register_structseq(cls: type) -> None: ...
 
 ${structseq_defs}
 
