@@ -272,7 +272,6 @@ class TestExport(TestCase):
 
     # Errors because non-strict is not supported in training IR (T193692164)
     @testing.expectedFailureTrainingIRToRunDecomp
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_external_call_non_strict_real_tensor(self):
         class ExternalMethod:
             def add(self, x):
@@ -345,7 +344,6 @@ class TestExport(TestCase):
 
     # Errors because non-strict is not supported in training IR (T193692164)
     @testing.expectedFailureTrainingIRToRunDecomp
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_basic_non_strict_real_tensor(self):
         class Basic(torch.nn.Module):
             def __init__(self):
@@ -619,7 +617,6 @@ class TestExport(TestCase):
 
     # Predispatch has different expected results
     @testing.expectedFailureTrainingIRToRunDecomp  # T193700910
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_torch_fn(self):
         class M1(torch.nn.Module):
             def __init__(self):
@@ -2608,7 +2605,6 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
         self.assertEqual(len(input_shapes), 9)
         self.assertTrue(all(shape == "torch.Size([s0])" for shape in input_shapes))
 
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_error_does_not_reference_eager_fallback(self):
         class Module(torch.nn.Module):
             def forward(self, x):
@@ -3705,7 +3701,6 @@ def forward(self, x):
             )
         )
 
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_check_is_size_error(self):
         class Module(torch.nn.Module):
             def forward(self, x):
@@ -4909,7 +4904,6 @@ graph():
         )
 
     @testing.expectedFailureTrainingIRToRunDecomp  # T193702033
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_sym_stack_trace(self):
         # TODO(avik): update this test with torch._check*
         class Foo(torch.nn.Module):
@@ -5296,7 +5290,6 @@ def forward(self, x, b_t, y):
 
     # Errors because non-strict is not supported in training IR (T193692164)
     @testing.expectedFailureTrainingIRToRunDecomp
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_compiling_state(self):
         class TestModule1(torch.nn.Module):
             def forward(self, x):
