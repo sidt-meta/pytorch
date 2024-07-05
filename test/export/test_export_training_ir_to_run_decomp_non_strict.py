@@ -11,7 +11,7 @@ test_classes = {}
 
 
 def mocked_training_ir_to_run_decomp_export_non_strict(*args, **kwargs):
-    if "strict":
+    if "strict" in kwargs:
         ep = _export_for_training(*args, **kwargs)
     else:
         ep = _export_for_training(*args, **kwargs, strict=False)

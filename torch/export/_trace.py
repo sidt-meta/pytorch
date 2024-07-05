@@ -50,6 +50,7 @@ from torch._guards import detect_fake_mode
 
 from torch._library.fake_class_registry import FakeScriptObject
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+from torch._subclasses.functional_tensor import FunctionalTensorMode
 from torch._utils_internal import log_export_usage
 from torch.export.dynamic_shapes import _combine_args
 from torch.export.exported_program import OutputKind
@@ -1326,6 +1327,19 @@ def _export_to_aten_ir_make_fx(
     def _make_fx_helper(mod, args, kwargs, **flags):
         kwargs = kwargs or {}
 
+        named_parameters = dict(mod.named_parameters(remove_duplicate=False))
+        param_len = len(named_parameters)
+        named_buffers = dict(mod.named_buffers(remove_duplicate=False))
+        buffer_len = len(named_buffers)
+
+        params_and_buffers = {
+            **dict(named_parameters),
+            **dict(named_buffers),
+        }
+        params_and_buffers_flat, params_spec = pytree.tree_flatten(params_and_buffers)
+        params_and_buffers_flat = tuple(params_and_buffers_flat)
+        params_len = len(params_and_buffers)
+
         functional_call = create_functional_call(
             mod, params_spec, params_len, store_orig_mod=True
         )
@@ -1340,7 +1354,11 @@ def _export_to_aten_ir_make_fx(
         full_args.extend(flat_args)
 
         with enable_python_dispatcher():
-            gm = make_fx(functional_call, pre_dispatch=True)(*full_args)
+            gm = make_fx(
+                functional_call,
+                record_module_stack=True,
+                pre_dispatch=True,
+            )(*full_args)
 
         return gm, None
 
@@ -1358,14 +1376,7 @@ def _export_to_aten_ir_make_fx(
         param_len = len(named_parameters)
         named_buffers = dict(mod.named_buffers(remove_duplicate=False))
         buffer_len = len(named_buffers)
-
-        params_and_buffers = {
-            **dict(named_parameters),
-            **dict(named_buffers),
-        }
-        params_and_buffers_flat, params_spec = pytree.tree_flatten(params_and_buffers)
-        params_and_buffers_flat = tuple(params_and_buffers_flat)
-        params_len = len(params_and_buffers)
+        params_len = param_len + buffer_len
 
         gm, sig = transform(_make_fx_helper)(
             mod,
