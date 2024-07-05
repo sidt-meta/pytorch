@@ -666,7 +666,6 @@ class MetaConverter:
         source: Optional[Source] = None,
         symbolic_context: Optional[SymbolicContext] = None,
     ):
-        # breakpoint()
         if source is None:
             from torch._dynamo.source import ConstantSource
 
