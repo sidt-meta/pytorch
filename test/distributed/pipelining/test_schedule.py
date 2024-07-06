@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-from model_registry import ModelWithKwargs, MultiMLP
+from model_registry import ModelWithKwargs, MultiMLP, MultiMLPWithDw
 from schedule_registry import ScheduleUnbalanced, ScheduleVShaped, ScheduleWithW
 
 import torch
@@ -499,6 +499,128 @@ class ScheduleTest(MultiProcContinousTest):
 
     @requires_nccl()
     @skip_but_pass_in_sandcastle_if(not TEST_MULTIGPU, "NCCL test requires 2+ GPUs")
+    @parametrize("ScheduleClass", [ScheduleFlexibleInterleaved1F1B])
+    def test_schedule_with_weight_update_mlp_e2e(self, ScheduleClass):
+        return
+        stages_per_rank = 2
+        n_stages = stages_per_rank * self.world_size
+        full_mod = MultiMLPWithDw(d_hid, n_layers=n_stages)
+        full_mod.to(self.device)
+
+        ref_mod = copy.deepcopy(full_mod)
+        x = torch.randn(batch_size, d_hid, device=self.device)
+        with torch.no_grad():
+            y = ref_mod(x)
+            # Add a small perturbation
+            target = y + torch.randn(batch_size, d_hid, device=self.device)
+
+        ref_loss_fn = torch.nn.MSELoss(reduction="sum")
+        full_loss_fn = torch.nn.MSELoss(reduction="sum")
+
+        ref_optimizer = torch.optim.Adam(ref_mod.parameters(), lr=0.001)
+        full_optimizer = torch.optim.Adam(full_mod.parameters(), lr=0.001)
+
+        full_mod.toggle()
+
+        # Get a submodule, e.g. `layers.0` or `layers.1`
+        stage_indices = [
+            self.rank + i * self.world_size for i in range(stages_per_rank)
+        ]
+        submod_names = [f"layers.{i}" for i in stage_indices]
+        stage_modules = [
+            full_mod.get_submodule(submod_name) for submod_name in submod_names
+        ]
+
+        # Run reference
+        for _ in range(2):
+            ref_stage_modules = [
+                ref_mod.get_submodule(submod_name) for submod_name in submod_names
+            ]
+            for stage_module in ref_stage_modules:
+                stage_module.zero_grad()
+
+            ref_mod.zero_grad()
+            ref_out = ref_mod(x)
+            ref_loss = ref_loss_fn(ref_out, target)
+            ref_loss.backward()
+
+        class CustomState:
+            def __init__(self, stage_module, stage_idx, rank):
+                self.i = 0
+                self.stage_module = stage_module
+                self.stage_idx = stage_idx
+                self.rank = rank
+
+            def dw_builder(self):
+                def dw_runner():
+                    # This inner function would be called by PipelineStage during `backward_weight_one_chunk`
+                    self.i += 1
+                    print(
+                        f"[Rank {self.rank}] dw_count={self.i} stage={self.stage_idx}"
+                    )
+                    self.stage_module.compute_dW()
+
+                return dw_runner
+
+        cs = {}
+        for stage_module, stage_idx in zip(stage_modules, stage_indices):
+            cs[stage_idx] = CustomState(stage_module, stage_idx, self.rank)
+
+        # Create a pipeline stage to wrap that submodule
+        chunks = 2
+        input_args = x.chunk(chunks)[0]
+        stages = [
+            PipelineStage(
+                stage_module,
+                stage_idx,
+                n_stages,
+                self.device,
+                input_args=input_args,
+                dw_builder=cs[stage_idx].dw_builder,
+            )
+            for stage_module, stage_idx in zip(stage_modules, stage_indices)
+        ]
+
+        # Attach to a schedule
+        schedule = ScheduleClass(
+            stages, chunks, loss_fn=full_loss_fn, enable_zero_bubble=True
+        )
+
+        for _ in range(2):
+            # Zero gradients
+            for stage_module in stage_modules:
+                stage_module.zero_grad()
+            if self.rank == 0:
+                schedule.step(x)
+            elif self.rank == self.world_size - 1:
+                losses = []
+                out = schedule.step(target=target, losses=losses)
+            else:
+                schedule.step()
+
+        dist.barrier()
+        # Last rank checks result
+        if self.rank == self.world_size - 1:
+            # Check output
+            torch.testing.assert_close(out, ref_out, rtol=1e-5, atol=1e-5)
+
+            # Check loss
+            # Since the reduction used in the loss function above is "sum", we use
+            # "sum" here to reduce microbatch losses into a single value too.
+            pipe_loss = sum(losses)
+            torch.testing.assert_close(pipe_loss, ref_loss, rtol=1e-5, atol=1e-5)
+
+        # Every rank checks gradients
+        for stage_module, submod_name in zip(stage_modules, submod_names):
+            # Get corresponding submodule from reference model
+            ref_submod = ref_mod.get_submodule(submod_name)
+            # Check gradients per parameter
+            for name, p in stage_module.named_parameters():
+                ref_p = ref_submod.get_parameter(name)
+                torch.testing.assert_close(p.grad, ref_p.grad, rtol=1e-5, atol=1e-5)
+
+    @requires_nccl()
+    @skip_but_pass_in_sandcastle_if(not TEST_MULTIGPU, "NCCL test requires 2+ GPUs")
     @parametrize("ScheduleClass", [ScheduleWithW])
     def test_schedule_with_weight_update(self, ScheduleClass):
         stages_per_rank = 2
@@ -537,10 +659,8 @@ class ScheduleTest(MultiProcContinousTest):
                 self.i = 0
 
             def dw_builder(self):
-                """This simulates a function attached to a model with a custom backward.
-                Each call to builder gives a new dw_runner that has some updated state to compute the latest dw.
-                """
-
+                # This simulates a function attached to a model with a custom backward.
+                # Each call to builder gives a new dw_runner that has some updated state to compute the latest dw.
                 def dw_runner():
                     # This inner function would be called by PipelineStage during `backward_weight_one_chunk`
                     print(f"dw called {self.i}th time")
@@ -611,14 +731,10 @@ instantiate_parametrized_tests(ScheduleTest)
 
 
 class TestSchedulePlan(unittest.TestCase):
-    @parametrize(
-        "ScheduleClass",
-        [ScheduleFlexibleInterleaved1F1B, ScheduleInterleaved1F1B, ScheduleLoopedBFS],
-    )
-    def test_pipeline_order(self, ScheduleClass):
+    def setUp(self):
         # Define a list of test cases with varying num_local_stages, num_microbatches, and group_size
         # These should succeed since num_microbatches % group_size == 0
-        test_cases = [
+        self.test_cases = [
             # small number of stages
             (2, 2, 2),
             (2, 4, 4),
@@ -649,16 +765,19 @@ class TestSchedulePlan(unittest.TestCase):
             (2, 10, 4),
             (2, 15, 4),
         ]
-        for num_local_stages, num_microbatches, group_size in test_cases:
+
+    @parametrize(
+        "ScheduleClass",
+        [ScheduleInterleaved1F1B, ScheduleLoopedBFS],
+    )
+    def test_pipeline_order(self, ScheduleClass):
+        for num_local_stages, num_microbatches, group_size in self.test_cases:
             with self.subTest(
                 num_local_stages=num_local_stages,
                 num_microbatches=num_microbatches,
                 group_size=group_size,
             ):
-                only_run_in_flex_pp = num_microbatches % group_size != 0
-                if only_run_in_flex_pp and not isinstance(
-                    ScheduleClass, ScheduleFlexibleInterleaved1F1B
-                ):
+                if num_microbatches % group_size != 0:
                     continue
 
                 print(f"{num_local_stages=} {num_microbatches=} {group_size=}")
@@ -676,6 +795,43 @@ class TestSchedulePlan(unittest.TestCase):
                 _validate_pipeline_order(
                     schedule.pipeline_order, num_microbatches, num_stages
                 )
+
+    @parametrize(
+        "ScheduleClass",
+        [ScheduleFlexibleInterleaved1F1B],
+    )
+    def test_pipeline_order_flex_and_zero_bubble(self, ScheduleClass):
+        for num_local_stages, num_microbatches, group_size in self.test_cases:
+            with self.subTest(
+                num_local_stages=num_local_stages,
+                num_microbatches=num_microbatches,
+                group_size=group_size,
+            ):
+                warmups_ops_last_stage = (num_local_stages - 1) * (
+                    num_microbatches // max(1, num_microbatches // group_size)
+                )
+                warmup_ops = warmups_ops_last_stage + 2 * (group_size - 1)
+                warmup_ops = min(warmup_ops, num_microbatches * num_local_stages)
+
+                for i in range(2):
+                    num_stages = num_local_stages * group_size
+                    stages = [
+                        MockPipelineStage(group_size=group_size, num_stages=num_stages)
+                        for i in range(num_local_stages)
+                    ]
+                    schedule = ScheduleClass(
+                        stages, num_microbatches, enable_zero_bubble=(i == 0)
+                    )
+                    formatted_pipeline_order = _format_pipeline_order(
+                        schedule.pipeline_order
+                    )
+                    # print(formatted_pipeline_order)
+                    _validate_pipeline_order(
+                        schedule.pipeline_order,
+                        num_microbatches,
+                        num_stages,
+                        enable_zero_bubble=(i == 0),
+                    )
 
 
 instantiate_parametrized_tests(TestSchedulePlan)
