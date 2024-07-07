@@ -84,7 +84,7 @@ class Pattern:
         )
         return (
             f"{self.name}: {len(events)} events matched. "
-            f"Total Estimated Speedup: {format_time(original_time - new_time)} ({round(original_time/new_time, 2)}X)"
+            f"Total Estimated Speedup: {format_time(original_time - new_time)} ({round(original_time / new_time, 2)}X)"
         )
 
     def match(self, event: _ProfilerEvent):
@@ -275,10 +275,7 @@ class ForLoopIndexingPattern(Pattern):
         def same_ops(list1, list2):
             if len(list1) != len(list2):
                 return False
-            for op1, op2 in zip(list1, list2):
-                if op1.name != op2.name:
-                    return False
-            return True
+            return all(op1.name == op2.name for op1, op2 in zip(list1, list2))
 
         # Record the ops between two aten::select
         next_select_idx = index_of_first_match(next, lambda e: e.name == "aten::select")
@@ -374,10 +371,10 @@ class OptimizerSingleTensorPattern(Pattern):
         self.url = ""
 
     def match(self, event: _ProfilerEvent):
-        for optimizer in self.optimizers_with_foreach:
-            if event.name.endswith(f"_single_tensor_{optimizer}"):
-                return True
-        return False
+        return any(
+            event.name.endswith(f"_single_tensor_{optimizer}")
+            for optimizer in self.optimizers_with_foreach
+        )
 
 
 class SynchronizedDataLoaderPattern(Pattern):
@@ -623,7 +620,7 @@ def report_all_anti_patterns(
     ]
     reported = set()
     summaries = []
-    message_list = [f"{'-'*40}TorchTidy Report{'-'*40}"]
+    message_list = [f"{'-' * 40}TorchTidy Report{'-' * 40}"]
     message_list.append("Matched Events:")
 
     for anti_pattern in anti_patterns:
@@ -658,6 +655,6 @@ def report_all_anti_patterns(
 
     message_list.append("Summary:")
     message_list += summaries
-    message_list.append(f"{'-'*40}TorchTidy Report{'-'*40}")
+    message_list.append(f"{'-' * 40}TorchTidy Report{'-' * 40}")
     if print_enable:
         print("\n".join(message_list))
