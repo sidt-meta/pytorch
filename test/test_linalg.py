@@ -2172,7 +2172,7 @@ class TestLinalg(TestCase):
                 self.target_test.precision_overrides = {torch.float: 1e-4, torch.cfloat: 2e-4}
                 return self.target_test.precision_overrides
 
-            def __exit__(self, type, value, tb) -> bool:
+            def __exit__(self, exc_type, exc_value, exc_tb) -> bool:
                 if 'nuc' != self.norm:
                     return True
                 if self.saved_overrides is None:

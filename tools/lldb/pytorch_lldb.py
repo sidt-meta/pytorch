@@ -24,7 +24,7 @@ class DisableBreakpoints:
         if target.DisableAllBreakpoints() is False:
             print("[-] error: failed to disable all breakpoints.")
 
-    def __exit__(self, etype: Any, evalue: Any, tb: Any) -> None:
+    def __exit__(self, exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
         target = get_target()
 
         if target.EnableAllBreakpoints() is False:

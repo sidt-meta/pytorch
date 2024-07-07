@@ -66,7 +66,7 @@ class guaranteed_datapipes_determinism:
     def __enter__(self) -> None:
         pass
 
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    def __exit__(self, exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
         global _determinism
         _determinism = self.prev
 
@@ -181,7 +181,7 @@ class runtime_validation_disabled:
     def __enter__(self) -> None:
         pass
 
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    def __exit__(self, exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
         global _runtime_validation_enabled
         _runtime_validation_enabled = self.prev
 
