@@ -373,7 +373,6 @@ def _decompose_and_get_gm_with_new_signature_constants(
             fake_mode, _get_params_buffers(mod)
         )
         constant_attrs = _gather_constant_attrs(mod)
-        # aten_export_artifact = _export_to_aten_ir(
         aten_export_artifact = _export_to_aten_ir_unified(
             mod,
             fake_args_unwrapped[0],
