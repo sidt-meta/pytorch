@@ -690,8 +690,6 @@ graph():
             torch.allclose(ep.module()(torch.zeros(2, 3)), torch.ones(2, 3) * 21)
         )
 
-    # Predispatch has different expected results
-    @testing.expectedFailureTrainingIRToRunDecomp  # T193700910
     def test_torch_fn(self):
         class M1(torch.nn.Module):
             def __init__(self):

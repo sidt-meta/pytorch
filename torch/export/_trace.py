@@ -694,7 +694,7 @@ def _export_to_aten_ir_unified(
     output_names = _graph_output_names(gm)
 
     # Produce signature
-    def make_argument_spec(i, node) -> ArgumentSpec:
+    def make_argument_spec(i, node, num_tokens=None) -> ArgumentSpec:
         if isinstance(node, (int, bool, float, type(None))):
             # For const outputs we just directly return this
             return ConstantArgument(name="", value=node)
@@ -703,6 +703,9 @@ def _export_to_aten_ir_unified(
             "val" in node.meta
         ), f"{node} is not a constant or a node with a 'val' metadata field"
         val = node.meta["val"]
+        if num_tokens is not None and i < num_tokens:
+            # TODO: We should be checking for a different type, once we add a new type
+            return TokenArgument(name=node.name)
         if isinstance(val, FakeTensor):
             return TensorArgument(name=node.name)
         elif isinstance(val, torch.SymInt):
@@ -783,6 +786,7 @@ def _export_to_aten_ir_unified(
                         node.meta["val"] = user_arg
                 index += 1
 
+        num_tokens = len(graph_signature.input_tokens)
         input_specs, output_specs = _sig_to_specs(
             user_inputs=set(graph_signature.user_inputs),
             inputs_to_parameters=graph_signature.inputs_to_parameters,  # type: ignore[arg-type]
@@ -794,12 +798,12 @@ def _export_to_aten_ir_unified(
             grad_user_inputs=graph_signature.backward_signature.gradients_to_user_inputs if is_joint else {},  # type: ignore[arg-type, union-attr]
             loss_output=graph_signature.backward_signature.loss_output if is_joint else None,  # type: ignore[arg-type, union-attr]
             inputs=[
-                make_argument_spec(i, node)
+                make_argument_spec(i, node, num_tokens)
                 for i, node in enumerate(gm.graph.nodes)
                 if node.op == "placeholder"
             ],
             outputs=[
-                make_argument_spec(i, node)
+                make_argument_spec(i, node, num_tokens)
                 for i, node in enumerate(
                     pytree.tree_leaves(next(iter(reversed(gm.graph.nodes))).args)
                 )
@@ -1456,6 +1460,7 @@ def _non_strict_export(
                 fake_params_buffers,
                 new_fake_constant_attrs,
                 transform=_tuplify_outputs,
+                _is_torch_jit_trace=_is_torch_jit_trace,
             )
             # aten_export_artifact.constants contains only fake script objects, we need to map them back
             aten_export_artifact.constants = {
