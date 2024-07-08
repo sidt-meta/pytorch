@@ -310,6 +310,7 @@ graph():
         )
 
     # Errors because fake mode is not detected from non-tensor inputs
+    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     @testing.expectedFailureTrainingIRToRunDecomp
     def test_no_tensor_computation_3(self):
         class Module(torch.nn.Module):
@@ -329,6 +330,7 @@ graph():
     return (5,)""",
         )
 
+    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_no_tensor_computation_4(self):
         class Module(torch.nn.Module):
             def forward(self, x, y):
@@ -3651,6 +3653,7 @@ def forward(self, x):
 
     # https://github.com/pytorch/pytorch/issues/129939
     @testing.expectedFailureNonStrict
+    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_export_cond(self):
         class A(torch.nn.Module):
             def __init__(self):
@@ -6139,7 +6142,9 @@ def forward(self, x, y):
         for param in ["alpha", "beta", "gamma"]:
             self.assertTrue(param in unep.state_dict())
 
-    @testing.expectedFailureTrainingIRToRunDecomp  # nn_module_stack replacement when we do sympy_interp()
+    # nn_module_stack replacement when we do sympy_interp()
+    @testing.expectedFailureTrainingIRToRunDecomp
+    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_intermediate_shape_comp(self):
         class Foo(torch.nn.Module):
             def forward(self, x, y):

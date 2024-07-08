@@ -332,7 +332,7 @@ def _decompose_and_get_gm_with_new_signature_constants(
     from torch._guards import detect_fake_mode
 
     from torch.export._trace import (
-        _export_to_aten_ir,
+        _export_to_aten_ir_unified,
         _get_params_buffers,
         _ignore_backend_decomps,
         _verify_nn_module_stack,
@@ -373,12 +373,14 @@ def _decompose_and_get_gm_with_new_signature_constants(
             fake_mode, _get_params_buffers(mod)
         )
         constant_attrs = _gather_constant_attrs(mod)
-        aten_export_artifact = _export_to_aten_ir(
+        # aten_export_artifact = _export_to_aten_ir(
+        aten_export_artifact = _export_to_aten_ir_unified(
             mod,
             fake_args_unwrapped[0],
             fake_args_unwrapped[1],
             fake_params_buffers,
             constant_attrs,
+            is_training=False,
         )
 
         gm = aten_export_artifact.gm
