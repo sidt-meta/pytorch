@@ -47,7 +47,6 @@ from torch._guards import detect_fake_mode
 
 from torch._library.fake_class_registry import FakeScriptObject
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-from torch._subclasses.functional_tensor import FunctionalTensorMode
 from torch._utils_internal import log_export_usage
 from torch.export.dynamic_shapes import _combine_args
 from torch.export.exported_program import OutputKind
@@ -625,9 +624,7 @@ def _export_to_aten_ir_unified(
         full_args: List[Any] = []
         full_args.extend(params_and_buffers_flat)
 
-        flat_fn, out_spec = create_tree_flattened_fn(
-            functional_call, args, kwargs
-        )
+        flat_fn, out_spec = create_tree_flattened_fn(functional_call, args, kwargs)
         flat_args, in_spec = pytree.tree_flatten((args, kwargs))
         full_args.extend(flat_args)
 
@@ -650,7 +647,9 @@ def _export_to_aten_ir_unified(
         strict=True,
         stack_weights=True,
     ), grad_safe_guard, _ignore_backend_decomps(), _compiling_state_context():  # type: ignore[attr-defined]
-        gm, graph_signature = transform(_make_fx_helper if is_training else aot_export_module)(
+        gm, graph_signature = transform(
+            _make_fx_helper if is_training else aot_export_module
+        )(
             mod,
             fake_args,
             trace_joint=False,
@@ -667,7 +666,10 @@ def _export_to_aten_ir_unified(
     # Run this pass before creating input/output specs, since size-related CSE/DCE might affect output signature.
     # Overwrite output specs afterwards.
     from torch._dynamo import config as _dynamo_config
-    from torch._functorch._aot_autograd.input_output_analysis import _graph_input_names, _graph_output_names
+    from torch._functorch._aot_autograd.input_output_analysis import (
+        _graph_input_names,
+        _graph_output_names,
+    )
     from torch._guards import detect_fake_mode
 
     flat_fake_args = pytree.tree_leaves((fake_args, fake_kwargs))
@@ -767,7 +769,9 @@ def _export_to_aten_ir_unified(
         )
 
     else:
-        graph_signature.user_outputs = output_names  # might change with runtime asserts pass
+        graph_signature.user_outputs = (
+            output_names  # might change with runtime asserts pass
+        )
         is_joint = graph_signature.backward_signature is not None
 
         # NOTE: aot_export adds symint metadata for placeholders with int values;
@@ -1408,11 +1412,15 @@ def _non_strict_export(
             if sig:
                 sig.parameters = pytree.tree_map(_strip_root, sig.parameters)
                 sig.buffers = pytree.tree_map(_strip_root, sig.buffers)
-                sig.inputs_to_buffers = pytree.tree_map(_strip_root, sig.inputs_to_buffers)
+                sig.inputs_to_buffers = pytree.tree_map(
+                    _strip_root, sig.inputs_to_buffers
+                )
                 sig.inputs_to_parameters = pytree.tree_map(
                     _strip_root, sig.inputs_to_parameters
                 )
-                sig.buffers_to_mutate = pytree.tree_map(_strip_root, sig.buffers_to_mutate)
+                sig.buffers_to_mutate = pytree.tree_map(
+                    _strip_root, sig.buffers_to_mutate
+                )
 
             for node in gm.graph.nodes:
                 if "nn_module_stack" in node.meta:
@@ -1584,9 +1592,7 @@ def _export_unified(
     flat_args, orig_in_spec = pytree.tree_flatten((args, kwargs))
     original_state_dict = mod.state_dict(keep_vars=True)
     forward_arg_names = (
-        _get_forward_arg_names(mod, args, kwargs)
-        if not _is_torch_jit_trace
-        else None
+        _get_forward_arg_names(mod, args, kwargs) if not _is_torch_jit_trace else None
     )
 
     # handle strict/non-strict, training/inference IR
@@ -1672,6 +1678,7 @@ def _export_unified(
 
     assert _EXPORT_MODULE_HIERARCHY is not None
     from torch._export.verifier import TrainingIRVerifier, Verifier
+
     verifier = TrainingIRVerifier if is_training else Verifier
 
     exported_program = ExportedProgram(
@@ -1706,7 +1713,6 @@ def _export_for_training(
     strict: bool = True,
     preserve_module_call_signature: Tuple[str, ...] = (),
 ) -> ExportedProgram:
-
     global _EXPORT_FLAGS
     flags = set()
     flags.add("strict" if strict else "non_strict")
@@ -1743,7 +1749,6 @@ def _export(
     _disable_forced_specializations: Optional[bool] = False,
     _is_torch_jit_trace: bool = False,
 ) -> ExportedProgram:
-
     global _EXPORT_FLAGS
     flags = set()
     flags.add("strict" if strict else "non_strict")
