@@ -349,8 +349,6 @@ graph():
     return (x_0,)""",
         )
 
-    # Errors because non-strict is not supported in training IR (T193692164)
-    @testing.expectedFailureTrainingIRToRunDecomp
     def test_external_call_non_strict_real_tensor(self):
         class ExternalMethod:
             def add(self, x):
@@ -421,8 +419,6 @@ graph():
         args = (torch.randn(15, 3, 256, 256), torch.ones(15, 32, 256, 256))
         self.assertEqual(gm(*args), m(*args))
 
-    # Errors because non-strict is not supported in training IR (T193692164)
-    @testing.expectedFailureTrainingIRToRunDecomp
     def test_basic_non_strict_real_tensor(self):
         class Basic(torch.nn.Module):
             def __init__(self):
@@ -5365,8 +5361,6 @@ def forward(self, x, b_t, y):
             # under a new FakeTensorMode.
             ep = torch.export.export(m, (inp,))
 
-    # Errors because non-strict is not supported in training IR (T193692164)
-    @testing.expectedFailureTrainingIRToRunDecomp
     def test_compiling_state(self):
         class TestModule1(torch.nn.Module):
             def forward(self, x):
@@ -6143,7 +6137,6 @@ def forward(self, x, y):
             self.assertTrue(param in unep.state_dict())
 
     # nn_module_stack replacement when we do sympy_interp()
-    @testing.expectedFailureTrainingIRToRunDecomp
     @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_intermediate_shape_comp(self):
         class Foo(torch.nn.Module):
