@@ -569,7 +569,7 @@ def _export_to_torch_ir(
     return gm_torch_level
 
 
-def _export_to_aten_ir_unified(
+def _export_to_aten_ir(
     mod: torch.nn.Module,
     fake_args,
     fake_kwargs,
@@ -1550,7 +1550,7 @@ def _export_unified(
 
     # handle strict/non-strict, training/inference IR
     lower_to_aten_callback = functools.partial(
-        _export_to_aten_ir_unified,
+        _export_to_aten_ir,
         is_training=is_training,
         pre_dispatch=True if is_training else pre_dispatch,
     )
