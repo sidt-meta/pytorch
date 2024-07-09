@@ -601,7 +601,7 @@ def _export_to_aten_ir(
             torch.compiler._is_compiling_flag = old_value
 
     def _make_fx_helper(mod, args, kwargs, **flags):
-        # TODO(pianpwk): what the heck is this
+        # TODO(pianpwk): have a better story for this once _export_for_training comes together
         kwargs = kwargs or {}
 
         named_parameters = dict(mod.named_parameters(remove_duplicate=False))
@@ -696,7 +696,7 @@ def _export_to_aten_ir(
     output_names = _graph_output_names(gm)
 
     # Produce signature
-    def make_argument_spec(i, node, num_tokens=None) -> ArgumentSpec:
+    def make_argument_spec(i, node, num_tokens) -> ArgumentSpec:
         if isinstance(node, (int, bool, float, type(None))):
             # For const outputs we just directly return this
             return ConstantArgument(name="", value=node)
@@ -705,7 +705,7 @@ def _export_to_aten_ir(
             "val" in node.meta
         ), f"{node} is not a constant or a node with a 'val' metadata field"
         val = node.meta["val"]
-        if num_tokens is not None and i < num_tokens:
+        if i < num_tokens:
             # TODO: We should be checking for a different type, once we add a new type
             return TokenArgument(name=node.name)
         if isinstance(val, FakeTensor):
@@ -731,15 +731,16 @@ def _export_to_aten_ir(
     named_buffers = dict(mod.named_buffers(remove_duplicate=False))
     buffer_len = len(named_buffers)
     params_len = param_len + buffer_len
-    num_tokens = None if is_training else len(graph_signature.input_tokens)
+    num_tokens = 0 if is_training else len(graph_signature.input_tokens)
     is_joint = not is_training and graph_signature.backward_signature is not None
 
     # populate example values with fake args
     index = 0
+    total_non_user_inputs = params_len + num_tokens
     for node in gm.graph.nodes:
         if node.op == "placeholder":
-            if index >= params_len:
-                user_arg = flat_fake_args[index - params_len]
+            if index >= total_non_user_inputs:
+                user_arg = flat_fake_args[index - total_non_user_inputs]
                 if not isinstance(user_arg, torch.Tensor):
                     node.meta["val"] = user_arg
             index += 1
