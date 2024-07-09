@@ -4628,7 +4628,6 @@ graph():
         optimized_model = torch.compile(exported_model)
         optimized_model(tensor_cpu, mask_cpu)
 
-    @testing.expectedFailureTrainingIRToRunDecomp  # T193701923
     def test_export_input_mutation_static_shape(self):
         class MutationModel(torch.nn.Module):
             def forward(self, x, y):
