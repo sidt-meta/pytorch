@@ -733,19 +733,18 @@ def _export_to_aten_ir(
 
     # placeholder order goes tokens -> params -> buffers -> user inputs
     params_len = param_len + buffer_len
-    num_tokens = len(input_names) - params_len
+    num_tokens = len(input_names) - params_len - len(flat_fake_args)
     total_non_user_inputs = params_len + num_tokens
     is_joint = not is_training and graph_signature.backward_signature is not None
 
     # populate example values with fake args
-    index = 0
-    for node in gm.graph.nodes:
-        if node.op == "placeholder":
-            if index >= total_non_user_inputs:
-                user_arg = flat_fake_args[index - total_non_user_inputs]
-                if not isinstance(user_arg, torch.Tensor):
-                    node.meta["val"] = user_arg
-            index += 1
+    for index, node in enumerate(gm.graph.nodes):
+        if index == len(input_names):
+            break
+        if index >= total_non_user_inputs:
+            user_arg = flat_fake_args[index - total_non_user_inputs]
+            if not isinstance(user_arg, torch.Tensor):
+                node.meta["val"] = user_arg
 
     # TODO(pianpwk): maybe rely on AOTAutograd for unifying this?
     input_specs, output_specs = _sig_to_specs(
