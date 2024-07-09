@@ -730,13 +730,15 @@ def _export_to_aten_ir(
     param_len = len(named_parameters)
     named_buffers = dict(mod.named_buffers(remove_duplicate=False))
     buffer_len = len(named_buffers)
+
+    # placeholder order goes tokens -> params -> buffers -> user inputs
     params_len = param_len + buffer_len
-    num_tokens = 0 if is_training else len(graph_signature.input_tokens)
+    num_tokens = len(input_names) - params_len
+    total_non_user_inputs = params_len + num_tokens
     is_joint = not is_training and graph_signature.backward_signature is not None
 
     # populate example values with fake args
     index = 0
-    total_non_user_inputs = params_len + num_tokens
     for node in gm.graph.nodes:
         if node.op == "placeholder":
             if index >= total_non_user_inputs:
@@ -747,9 +749,9 @@ def _export_to_aten_ir(
 
     # TODO(pianpwk): maybe rely on AOTAutograd for unifying this?
     input_specs, output_specs = _sig_to_specs(
-        user_inputs=set(input_names[params_len:]),
-        inputs_to_parameters=dict(zip(input_names[0:param_len], named_parameters)),
-        inputs_to_buffers=dict(zip(input_names[param_len : param_len + buffer_len], named_buffers)),  # type: ignore[arg-type]
+        user_inputs=set(input_names[total_non_user_inputs : ]),
+        inputs_to_parameters=dict(zip(input_names[num_tokens : total_non_user_inputs], named_parameters)),
+        inputs_to_buffers=dict(zip(input_names[num_tokens + param_len : total_non_user_inputs], named_buffers)),  # type: ignore[arg-type]
         user_outputs=set(output_names),
         buffer_mutations={} if is_training else graph_signature.buffers_to_mutate,
         user_input_mutations={} if is_training else graph_signature.user_inputs_to_mutate,
