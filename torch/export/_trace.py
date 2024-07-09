@@ -726,96 +726,49 @@ def _export_to_aten_ir_unified(
                 f"while writing the metadata for exported program"
             )
 
-    # TODO(pianpwk): maybe rely on AOTAutograd for unifying this? Very ugly right now
-    if is_training:
-        named_parameters = dict(mod.named_parameters(remove_duplicate=False))
-        param_len = len(named_parameters)
-        named_buffers = dict(mod.named_buffers(remove_duplicate=False))
-        buffer_len = len(named_buffers)
-        params_len = param_len + buffer_len
+    named_parameters = dict(mod.named_parameters(remove_duplicate=False))
+    param_len = len(named_parameters)
+    named_buffers = dict(mod.named_buffers(remove_duplicate=False))
+    buffer_len = len(named_buffers)
+    params_len = param_len + buffer_len
+    num_tokens = None if is_training else len(graph_signature.input_tokens)
+    is_joint = not is_training and graph_signature.backward_signature is not None
 
-        index = 0
-        for node in gm.graph.nodes:
-            if node.op == "placeholder":
-                if index >= params_len:
-                    user_arg = flat_fake_args[index - params_len]
-                    if not isinstance(user_arg, torch.Tensor):
-                        node.meta["val"] = user_arg
-                index += 1
+    # populate example values with fake args
+    index = 0
+    for node in gm.graph.nodes:
+        if node.op == "placeholder":
+            if index >= params_len:
+                user_arg = flat_fake_args[index - params_len]
+                if not isinstance(user_arg, torch.Tensor):
+                    node.meta["val"] = user_arg
+            index += 1
 
-        input_specs, output_specs = _sig_to_specs(
-            user_inputs=set(input_names[params_len:]),
-            inputs_to_parameters=dict(zip(input_names[0:param_len], named_parameters)),
-            inputs_to_buffers=dict(zip(input_names[param_len : param_len + buffer_len], named_buffers)),  # type: ignore[arg-type]
-            user_outputs=set(output_names),
-            buffer_mutations={},
-            user_input_mutations={},
-            grad_params={},  # type: ignore[arg-type, union-attr]
-            grad_user_inputs={},  # type: ignore[arg-type, union-attr]
-            loss_output=None,  # type: ignore[arg-type, union-attr]
-            inputs=[
-                make_argument_spec(i, node)
-                for i, node in enumerate(gm.graph.nodes)
-                if node.op == "placeholder"
-            ],
-            outputs=[
-                make_argument_spec(i, node)
-                for i, node in enumerate(
-                    pytree.tree_leaves(next(iter(reversed(gm.graph.nodes))).args)
-                )
-            ],
-            input_tokens=[],
-            output_tokens=[],
-        )
-
-    else:
-        graph_signature.user_outputs = (
-            output_names  # might change with runtime asserts pass
-        )
-        is_joint = graph_signature.backward_signature is not None
-
-        # NOTE: aot_export adds symint metadata for placeholders with int values;
-        # since these become specialized, we replace such metadata with the original values
-        index = 0
-        total_non_user_inputs = (
-            len(graph_signature.parameters)
-            + len(graph_signature.buffers)
-            + len(graph_signature.input_tokens)
-        )
-        for node in gm.graph.nodes:
-            if node.op == "placeholder":
-                if index >= total_non_user_inputs:
-                    user_arg = flat_fake_args[index - total_non_user_inputs]
-                    if not isinstance(user_arg, torch.Tensor):
-                        node.meta["val"] = user_arg
-                index += 1
-
-        num_tokens = len(graph_signature.input_tokens)
-        input_specs, output_specs = _sig_to_specs(
-            user_inputs=set(graph_signature.user_inputs),
-            inputs_to_parameters=graph_signature.inputs_to_parameters,  # type: ignore[arg-type]
-            inputs_to_buffers=graph_signature.inputs_to_buffers,  # type: ignore[arg-type]
-            user_outputs=set(graph_signature.user_outputs),  # type: ignore[arg-type]
-            buffer_mutations=graph_signature.buffers_to_mutate,  # type: ignore[arg-type]
-            user_input_mutations=graph_signature.user_inputs_to_mutate,  # type: ignore[arg-type]
-            grad_params=graph_signature.backward_signature.gradients_to_parameters if is_joint else {},  # type: ignore[arg-type, union-attr]
-            grad_user_inputs=graph_signature.backward_signature.gradients_to_user_inputs if is_joint else {},  # type: ignore[arg-type, union-attr]
-            loss_output=graph_signature.backward_signature.loss_output if is_joint else None,  # type: ignore[arg-type, union-attr]
-            inputs=[
-                make_argument_spec(i, node, num_tokens)
-                for i, node in enumerate(gm.graph.nodes)
-                if node.op == "placeholder"
-            ],
-            outputs=[
-                make_argument_spec(i, node, num_tokens)
-                for i, node in enumerate(
-                    pytree.tree_leaves(next(iter(reversed(gm.graph.nodes))).args)
-                )
-            ],
-            input_tokens=graph_signature.input_tokens,
-            output_tokens=graph_signature.output_tokens,
-        )
-
+    # TODO(pianpwk): maybe rely on AOTAutograd for unifying this?
+    input_specs, output_specs = _sig_to_specs(
+        user_inputs=set(input_names[params_len:]),
+        inputs_to_parameters=dict(zip(input_names[0:param_len], named_parameters)),
+        inputs_to_buffers=dict(zip(input_names[param_len : param_len + buffer_len], named_buffers)),  # type: ignore[arg-type]
+        user_outputs=set(output_names),
+        buffer_mutations={} if is_training else graph_signature.buffers_to_mutate,
+        user_input_mutations={} if is_training else graph_signature.user_inputs_to_mutate,
+        grad_params={} if (is_training or not is_joint) else graph_signature.backward_signature.gradients_to_parameters,  # type: ignore[arg-type, union-attr]
+        grad_user_inputs={} if (is_training or not is_joint) else graph_signature.backward_signature.gradients_to_user_inputs,  # type: ignore[arg-type, union-attr]
+        loss_output=None if (is_training or not is_joint) else graph_signature.backward_signature.loss_output,  # type: ignore[arg-type, union-attr]
+        inputs=[
+            make_argument_spec(i, node, num_tokens=num_tokens)
+            for i, node in enumerate(gm.graph.nodes)
+            if node.op == "placeholder"
+        ],
+        outputs=[
+            make_argument_spec(i, node, num_tokens=num_tokens)
+            for i, node in enumerate(
+                pytree.tree_leaves(next(iter(reversed(gm.graph.nodes))).args)
+            )
+        ],
+        input_tokens=[] if is_training else graph_signature.input_tokens,
+        output_tokens=[] if is_training else graph_signature.input_tokens,
+    )
     export_graph_signature = ExportGraphSignature(
         input_specs=input_specs, output_specs=output_specs
     )
