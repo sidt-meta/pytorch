@@ -629,11 +629,15 @@ def _export_to_aten_ir(
         params_buffers_args: List[Any] = []
         params_buffers_args.extend(params_and_buffers_flat)
         params_buffers_args.extend(args)
-        
-        flat_fn, out_spec = create_tree_flattened_fn(functional_call, params_buffers_args, kwargs)
+
+        flat_fn, out_spec = create_tree_flattened_fn(
+            functional_call, params_buffers_args, kwargs
+        )
         flat_args, in_spec = pytree.tree_flatten((params_buffers_args, kwargs))
-        wrapped_fn = lambda *args: tuple(flat_fn(*args))
-        functools.update_wrapper(wrapped_fn, flat_fn)
+
+        @functools.wraps(flat_fn)
+        def wrapped_fn(*args):
+            return tuple(flat_fn(*args))
 
         with enable_python_dispatcher():
             gm = make_fx(
@@ -674,7 +678,10 @@ def _export_to_aten_ir(
     # Run this pass before creating input/output specs, since size-related CSE/DCE might affect output signature.
     # Overwrite output specs afterwards.
     from torch._dynamo import config as _dynamo_config
-    from torch._functorch._aot_autograd.input_output_analysis import _graph_output_names
+    from torch._functorch._aot_autograd.input_output_analysis import (
+        _graph_input_names,
+        _graph_output_names,
+    )
     from torch._guards import detect_fake_mode
 
     flat_fake_args = pytree.tree_leaves((fake_args, fake_kwargs))
@@ -694,11 +701,6 @@ def _export_to_aten_ir(
                 f"exported program: {first_call_function_nn_module_stack(gm.graph)}",
                 export=True,
             )
-
-    from torch._functorch._aot_autograd.input_output_analysis import (
-        _graph_input_names,
-        _graph_output_names,
-    )
 
     # update output specs
     gm.recompile()
@@ -760,12 +762,16 @@ def _export_to_aten_ir(
 
     # TODO(pianpwk): maybe rely on AOTAutograd for unifying this?
     input_specs, output_specs = _sig_to_specs(
-        user_inputs=set(input_names[total_non_user_inputs : ]),
-        inputs_to_parameters=dict(zip(input_names[num_tokens : total_non_user_inputs], named_parameters)),
+        user_inputs=set(input_names[total_non_user_inputs:]),
+        inputs_to_parameters=dict(
+            zip(input_names[num_tokens : total_non_user_inputs], named_parameters)
+        ),
         inputs_to_buffers=dict(zip(input_names[num_tokens + param_len : total_non_user_inputs], named_buffers)),  # type: ignore[arg-type]
         user_outputs=set(output_names),
         buffer_mutations={} if is_training else graph_signature.buffers_to_mutate,
-        user_input_mutations={} if is_training else graph_signature.user_inputs_to_mutate,
+        user_input_mutations={}
+        if is_training
+        else graph_signature.user_inputs_to_mutate,
         grad_params={} if (is_training or not is_joint) else graph_signature.backward_signature.gradients_to_parameters,  # type: ignore[arg-type, union-attr]
         grad_user_inputs={} if (is_training or not is_joint) else graph_signature.backward_signature.gradients_to_user_inputs,  # type: ignore[arg-type, union-attr]
         loss_output=None if (is_training or not is_joint) else graph_signature.backward_signature.loss_output,  # type: ignore[arg-type, union-attr]
@@ -1377,7 +1383,9 @@ def _non_strict_export(
                 gm, sig = aot_export(wrapped_mod, args, kwargs=kwargs, **flags)
                 log.debug("Exported program from AOTAutograd:\n%s", gm)
 
-            if sig is not None:  # training IR export fn doesn't create AOTAutograd signature, this isn't needed
+            if (
+                sig is not None
+            ):  # training IR export fn doesn't create AOTAutograd signature, this isn't needed
                 sig.parameters = pytree.tree_map(_strip_root, sig.parameters)
                 sig.buffers = pytree.tree_map(_strip_root, sig.buffers)
                 sig.inputs_to_buffers = pytree.tree_map(

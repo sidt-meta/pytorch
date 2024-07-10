@@ -169,9 +169,8 @@ def is_serdes_test(test_name):
 
 
 def is_training_ir_test(test_name):
-    return (
-        test_name.endswith(TRAINING_IR_DECOMP_SUFFIX)
-        or test_name.endswith(TRAINING_IR_DECOMP_NS_SUFFIX)
+    return test_name.endswith(TRAINING_IR_DECOMP_SUFFIX) or test_name.endswith(
+        TRAINING_IR_DECOMP_NS_SUFFIX
     )
 
 
@@ -6181,7 +6180,8 @@ def forward(self, x, y):
         self.assertEqual(
             len(repeat_nodes),
             1
-            if is_non_strict_test(self._testMethodName) and not is_training_ir_test(self._testMethodName)
+            if is_non_strict_test(self._testMethodName)
+            and not is_training_ir_test(self._testMethodName)
             else 0,
         )
 
