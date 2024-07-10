@@ -1,5 +1,6 @@
 # Owner(s): ["module: fx"]
 
+import copy
 from typing import Set, Type
 
 import torch
@@ -61,7 +62,8 @@ class TestDCE(TestCase):
         traced.recompile()
         # Make sure we run and get the same results before/after DCE.
         inputs = [torch.tensor([1.5])] * new_num_phs
-        self.assertTrue(torch.equal(m(*inputs), traced(*inputs)))
+        inputs_copy = copy.deepcopy(inputs)
+        self.assertTrue(torch.equal(m(*inputs), traced(*inputs_copy)))
 
     def test_simple(self):
         """
@@ -174,3 +176,31 @@ class TestDCE(TestCase):
         # Note: Don't need to specify torch._assert as having side effects
         # because it's known to.
         self._run_dce_and_test(TestModule(), expect_dce_changes=False)
+
+    def test_impure_nodes(self):
+        """
+        Test that DCE doesn't remove call_function nodes with side effects.
+        """
+
+        class TestModule(torch.nn.Module):
+            def forward(self, a: torch.Tensor) -> torch.Tensor:
+                torch._ops.ops.aten.add_.Tensor(a, 1)
+                return a * 2
+
+        # %add_ node should not be removed because it has side effects.
+        self._run_dce_and_test(TestModule(), expect_dce_changes=False)
+
+    def test_impure_nodes_no_users(self):
+        """
+        Test that DCE remove call_function nodes with side effects if the mutable
+        arguments are not used.
+        """
+
+        class TestModule(torch.nn.Module):
+            def forward(self, a: torch.Tensor) -> torch.Tensor:
+                b = a * 2
+                torch._ops.ops.aten.add_.Tensor(b, 1)
+                return a
+
+        # %add_ node should be removed because b is not used by anything.
+        self._run_dce_and_test(TestModule(), expect_dce_changes=True)
