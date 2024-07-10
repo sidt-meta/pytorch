@@ -718,7 +718,7 @@ def _export_to_aten_ir(
         if i < num_tokens:
             # TODO: We should be checking for a different type, once we add a new type
             return TokenArgument(name=node.name)
-        if isinstance(val, FakeTensor):
+        elif isinstance(val, FakeTensor):
             return TensorArgument(name=node.name)
         elif isinstance(val, torch.SymInt):
             return SymIntArgument(name=node.name)
@@ -748,7 +748,8 @@ def _export_to_aten_ir(
     total_non_user_inputs = params_len + num_tokens
     is_joint = not is_training and graph_signature.backward_signature is not None
 
-    # populate example values with fake args
+    # NOTE: aot_export adds symint metadata for placeholders with int values;
+    # since these become specialized, we replace such metadata with the original values
     for index, node in enumerate(gm.graph.nodes):
         if index == len(input_names):
             break
@@ -779,6 +780,7 @@ def _export_to_aten_ir(
                 pytree.tree_leaves(next(iter(reversed(gm.graph.nodes))).args)
             )
         ],
+        # TODO(pianpwk): tokens/custom objects aren't well handled for training IR
         input_tokens=[] if is_training else graph_signature.input_tokens,
         output_tokens=[] if is_training else graph_signature.input_tokens,
     )
