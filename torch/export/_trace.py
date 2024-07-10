@@ -641,19 +641,22 @@ def _export_to_aten_ir(
             mod, params_spec, params_len, store_orig_mod=True
         )
 
-        full_args: List[Any] = []
-        full_args.extend(params_and_buffers_flat)
-
-        flat_fn, out_spec = create_tree_flattened_fn(functional_call, args, kwargs)
-        flat_args, in_spec = pytree.tree_flatten((args, kwargs))
-        full_args.extend(flat_args)
+        params_buffers_args: List[Any] = []
+        params_buffers_args.extend(params_and_buffers_flat)
+        params_buffers_args.extend(args)
+        
+        flat_fn, out_spec = create_tree_flattened_fn(functional_call, params_buffers_args, kwargs)
+        flat_args, in_spec = pytree.tree_flatten((params_buffers_args, kwargs))
+        wrapped_fn = lambda *args: tuple(flat_fn(*args))
+        functools.update_wrapper(wrapped_fn, flat_fn)
 
         with enable_python_dispatcher():
             gm = make_fx(
-                functional_call,
+                wrapped_fn,
                 record_module_stack=True,
                 pre_dispatch=True,
-            )(*full_args)
+            )(*flat_args)
+            gm.graph.eliminate_dead_code()
 
         return gm, None
 
@@ -1384,7 +1387,7 @@ def _non_strict_export(
                 gm, sig = aot_export(wrapped_mod, args, kwargs=kwargs, **flags)
                 log.debug("Exported program from AOTAutograd:\n%s", gm)
 
-            if sig:
+            if sig is not None:  # training IR export fn doesn't create AOTAutograd signature, this isn't needed
                 sig.parameters = pytree.tree_map(_strip_root, sig.parameters)
                 sig.buffers = pytree.tree_map(_strip_root, sig.buffers)
                 sig.inputs_to_buffers = pytree.tree_map(

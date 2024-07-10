@@ -327,7 +327,6 @@ graph():
     return (5,)""",
         )
 
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_no_tensor_computation_4(self):
         class Module(torch.nn.Module):
             def forward(self, x, y):
@@ -430,9 +429,6 @@ graph():
         ep = export(f, args, strict=False)
         self.assertEqual(ep.module()(*args), f(*args))
 
-    # Errors because non-strict is not supported in training IR (T193692164)
-    @testing.expectedFailureTrainingIRToRunDecomp
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_basic_non_strict_fake_tensor(self):
         class Basic(torch.nn.Module):
             def __init__(self):
@@ -1691,7 +1687,6 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
         self.assertEqual(range_lower_bounds, [1, 2])
         self.assertEqual(range_upper_bounds, [2, 3])
 
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_dynamic_shapes_builder_basic(self):
         class M(torch.nn.Module):
             def forward(self, x, y, z):
@@ -1746,7 +1741,6 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
     # retracing doesn't seem to like dataclass registration,
     # raising a dynamo error in fx_pytree.tree_flatten_spec
     @testing.expectedFailureRetraceability
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_dynamic_shapes_builder_pytree(self):
         torch.export.register_dataclass(
             Inp,
@@ -2512,7 +2506,6 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
         dynamic_shapes = {"x": (3 * _dx - 1,), "y": (3 * _dx,), "z": (3 * _dx + 2,)}
         export(Foo(), inputs, dynamic_shapes=dynamic_shapes)
 
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_refine_dynamic_shapes_from_suggested_fixes(self):
         from torch.export.dynamic_shapes import (
             refine_dynamic_shapes_from_suggested_fixes,
@@ -2833,8 +2826,6 @@ def forward(self, p_linear_weight, p_linear_bias, b_buffer, x):
         self.assertEqual(buffer[1].shape, torch.Size([100]))  # running_var
         self.assertEqual(buffer[2].shape, torch.Size([]))  # num_batches_tracked
 
-    @testing.expectedFailureTrainingIRToRunDecomp  # T193701564
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_export_dynamo_config(self):
         class MyModule(torch.nn.Module):
             def __init__(self):
@@ -5413,8 +5404,6 @@ def forward(self, x, b_t, y):
         self.assertEqual(mod.foo, ep.module().foo)
         self.assertEqual(mod(torch.ones(4, 4)), ep.module()(torch.ones(4, 4)))
 
-    @testing.expectedFailureTrainingIRToRunDecomp  # T193702033
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_symint_tensor_return(self):
         class Module(torch.nn.Module):
             def forward(self, x):
@@ -5593,7 +5582,6 @@ def forward(self, x):
         self.assertEqual(expected_names_and_ops, real_names_and_ops)
 
     @testing.expectedFailureRetraceability
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_placeholder_naming_collisions_hoo_subgraphs(self):
         # test collisions between user inputs, top-level nodes, and HOO subgraph nodes
         class Foo(torch.nn.Module):
@@ -5737,7 +5725,6 @@ def forward(self, x, y):
     return (add_1,)""",
         )
 
-    @testing.expectedFailureTrainingIRToRunDecompNonStrict
     def test_nested_dynamic_shapes_spec(self):
         class Foo(torch.nn.Module):
             def forward(self, x):
