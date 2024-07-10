@@ -28,9 +28,6 @@ from torch._export.passes._node_metadata_hook import (
     _node_metadata_hook,
     _set_node_metadata_hook,
 )
-from torch._export.passes.add_runtime_assertions_for_constraints_pass import (
-    _AddRuntimeAssertionsForInlineConstraintsPass,
-)
 from torch._export.passes.collect_tracepoints_pass import CollectTracepointsPass
 from torch._export.passes.lift_constants_pass import (
     ConstantAttrMap,
@@ -159,23 +156,6 @@ def _strip_root(x):
     return x
 
 
-def _add_runtime_assertions_to_cond_in_subgraph(range_constraints, gm, fake_mode):
-    # We can't get rid of this yet, since for some reason
-    # insert_deferred_runtime_assertions doesn't add assertions to cond
-    # subgraphs
-    if len(range_constraints) > 0:
-        stack_trace = (
-            'File "torch/_export/passes/add_runtime_assertions_for_constraints_pass.py", line 46, '
-            "in _AddRuntimeAssertionsForInlineConstraintsPass"
-        )
-        with fake_mode, _set_node_metadata_hook(
-            gm, functools.partial(_node_metadata_hook, stack_trace=stack_trace)
-        ):
-            res = _AddRuntimeAssertionsForInlineConstraintsPass(range_constraints)(gm)
-        assert res is not None
-        gm = res.graph_module
-
-
 def _rewrite_node(gm):
     for node in gm.graph.nodes:
         if node.target == torch.ops.higher_order._export_tracepoint:
@@ -199,13 +179,18 @@ def _rewrite_node(gm):
 def _convert_input_to_fake(gm, args, kwargs):
     params_buffers = _get_params_buffers(gm)
     fake_inps: List[torch.Tensor] = []
+    fake_vals: List[torch.Tensor] = []
     for node in gm.graph.nodes:
         if node.op == "placeholder" and "val" in node.meta:
             fake_val = node.meta["val"]
             if fake_val is not None and isinstance(fake_val, torch.Tensor):
                 fake_inps.append(fake_val)
+        elif len(fake_inps) == 0 and "example_value" in node.meta:
+            fake_val = node.meta["example_value"]
+            if fake_val is not None and isinstance(fake_val, torch.Tensor):
+                fake_vals.append(fake_val)
 
-    if detected_fake_mode := detect_fake_mode(fake_inps):
+    if detected_fake_mode := detect_fake_mode(fake_inps + fake_vals):
         fake_mode = detected_fake_mode
     else:
         fake_mode = FakeTensorMode(shape_env=ShapeEnv(), export=True)
@@ -686,6 +671,30 @@ def _export_to_aten_ir(
     if isinstance(mod, torch.fx.GraphModule) and hasattr(mod, "meta"):
         gm.meta.update(mod.meta)
 
+    # Run this pass before creating input/output specs, since size-related CSE/DCE might affect output signature.
+    # Overwrite output specs afterwards.
+    from torch._dynamo import config as _dynamo_config
+    from torch._functorch._aot_autograd.input_output_analysis import _graph_output_names
+    from torch._guards import detect_fake_mode
+
+    flat_fake_args = pytree.tree_leaves((fake_args, fake_kwargs))
+    fake_mode = detect_fake_mode(flat_fake_args)
+
+    if not _dynamo_config.do_not_emit_runtime_asserts:
+        stack_trace = (
+            'File "torch/fx/passes/runtime_assert.py", line 24, '
+            "in insert_deferred_runtime_asserts"
+        )
+        with _set_node_metadata_hook(
+            gm, functools.partial(_node_metadata_hook, stack_trace=stack_trace)
+        ):
+            insert_deferred_runtime_asserts(
+                gm,
+                fake_mode.shape_env,
+                f"exported program: {first_call_function_nn_module_stack(gm.graph)}",
+                export=True,
+            )
+
     from torch._functorch._aot_autograd.input_output_analysis import (
         _graph_input_names,
         _graph_output_names,
@@ -776,27 +785,6 @@ def _export_to_aten_ir(
     export_graph_signature = ExportGraphSignature(
         input_specs=input_specs, output_specs=output_specs
     )
-
-    from torch._guards import detect_fake_mode
-
-    fake_mode = detect_fake_mode(flat_fake_args)
-
-    from torch._dynamo import config as _dynamo_config
-
-    if not _dynamo_config.do_not_emit_runtime_asserts:
-        stack_trace = (
-            'File "torch/fx/passes/runtime_assert.py", line 24, '
-            "in insert_deferred_runtime_asserts"
-        )
-        with _set_node_metadata_hook(
-            gm, functools.partial(_node_metadata_hook, stack_trace=stack_trace)
-        ):
-            insert_deferred_runtime_asserts(
-                gm,
-                fake_mode.shape_env,
-                f"exported program: {first_call_function_nn_module_stack(gm.graph)}",
-                export=True,
-            )
 
     if not is_training and pre_dispatch:
         from torch._export.passes.replace_set_grad_with_hop_pass import (
