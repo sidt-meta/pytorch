@@ -780,7 +780,7 @@ def _export_to_aten_ir(
                 pytree.tree_leaves(next(iter(reversed(gm.graph.nodes))).args)
             )
         ],
-        # TODO(pianpwk): tokens/custom objects aren't well handled for training IR
+        # TODO(pianpwk): what's the story with custom objects/tokens here?
         input_tokens=[] if is_training else graph_signature.input_tokens,
         output_tokens=[] if is_training else graph_signature.input_tokens,
     )
