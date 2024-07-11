@@ -1908,7 +1908,7 @@ def _export(
     # Call the appropriate export function based on the strictness of tracing.
     export_func = _strict_export if strict else _non_strict_export
 
-    export_artifact = export_func(
+    export_artifact = export_func(  # type: ignore[operator]
         mod,
         args,
         kwargs,
