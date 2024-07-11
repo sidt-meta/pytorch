@@ -591,6 +591,9 @@ class BaseSchedulerNode:
         """
         Returns estimated op runtime in nanoseconds (ns)
         """
+        if isinstance(self, GroupedSchedulerNode):
+            return sum([node.get_estimated_runtime() for node in self.snodes])
+
         buf = self.get_nodes()[0].get_outputs()[0]
         layout = buf.node.get_layout()
         dtype = buf.node.get_dtype()
@@ -1355,6 +1358,7 @@ class GroupedSchedulerNode(BaseSchedulerNode):
         assert not any(isinstance(x, FusedSchedulerNode) for x in snodes)
         self.snodes = snodes
         self.scheduler = scheduler
+        scheduler.name_to_fused_node[self.get_name()] = self
         for snode in snodes:
             scheduler.name_to_fused_node[snode.get_name()] = self
         self.node = None
@@ -1386,13 +1390,47 @@ class GroupedSchedulerNode(BaseSchedulerNode):
     def get_buffer_names(self) -> Set[str]:
         return set.union(*[x.get_buffer_names() for x in self.snodes])
 
-    # GroupedSchedulerNode specific methods
+    def get_outputs(self) -> List[SchedulerBuffer]:
+        result: List[SchedulerBuffer] = []
+        for node in self.snodes:
+            result.extend(node.get_outputs())
+        return result
+
+    def get_nodes(self) -> Sequence[BaseSchedulerNode]:
+        return self.snodes
+
     @classmethod
     def can_fuse(cls, producer: BaseSchedulerNode, consumer: BaseSchedulerNode) -> bool:
         return False
 
     def add_fake_dep(self, name: Dep) -> None:
         self.set_read_writes(self.read_writes.with_read(name))
+
+    def debug_str(self) -> str:
+        """Longer form printout for trace logs"""
+        name = self.get_name()
+        node_typestr = ",".join(type(n).__name__ for n in self.snodes)
+        buf = IndentedBuffer()
+        buf.splice(
+            f"""\
+{name}: {type(self).__name__}({node_typestr})
+{name}.writes = {pformat(self.read_writes.writes)}
+{name}.unmet_dependencies = {pformat(self.unmet_dependencies)}
+{name}.met_dependencies = {pformat(self.read_writes.reads - self.unmet_dependencies)}
+{name}.outputs = [
+            """
+        )
+        with buf.indent():
+            for out in self.get_outputs():
+                buf.splice(out.debug_str())
+        buf.writeline("]")
+
+        try:
+            buf.splice(self.debug_str_extra())
+        except Exception:
+            log.warning("Ignoring error in debug_str()", exc_info=True)
+
+        return buf.getrawvalue().rstrip()
 
 
 def pick_loop_order(
@@ -1540,8 +1578,15 @@ class Scheduler:
         self.create_foreach_nodes()
         self.nodes = self.topological_sort_schedule(self.nodes)
         self.logged_slow_fusion: Set[Tuple[str, str]] = set()
+        # TODO: should we dynamically enable the enforce_comm_ordering_for_fsdp pass only when FSDP2 is traced
+        # (by setting Inductor config dynamically)?
         if config.pre_fusion_custom_pass is not None:
-            self.nodes = config.pre_fusion_custom_pass(self.nodes)
+            self.nodes = config.pre_fusion_custom_pass(
+                self.nodes,
+                name_to_fused_node=self.name_to_fused_node,  # type: ignore[call-arg]
+                graph_inputs=V.graph.graph_inputs,  # type: ignore[call-arg]
+                name_to_buf=self.name_to_buf,
+            )  # type: ignore[arg-type]
         self.nodes = self.fuse_nodes(self.nodes)
         self.finalize_multi_template_buffers()
         if config.reorder_for_compute_comm_overlap:
@@ -1902,12 +1947,16 @@ class Scheduler:
         """
         seen: Set[BaseSchedulerNode] = set()
         result: List[BaseSchedulerNode] = []
+        op_names = set([name for n in nodes for name in n.get_operation_names()])
 
         def visit(n: BaseSchedulerNode) -> None:
             if n not in seen:
                 seen.add(n)
-                for dep in sorted(n.unmet_dependencies, key=lambda d: d.name):
-                    op = self.name_to_buf[dep.name].defining_op
+                for buf_dep in sorted(n.unmet_dependencies, key=lambda d: d.name):
+                    op = self.name_to_buf[buf_dep.name].defining_op
+                    # We only care about doing toposort within `nodes`
+                    if op.get_name() not in op_names:
+                        continue
                     visit(self.name_to_fused_node[op.get_name()])
                 result.append(n)
 
