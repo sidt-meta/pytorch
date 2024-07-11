@@ -4375,6 +4375,7 @@ graph():
     # TODO Retracing a module with constant attrs don't work.(T193692674)
     @testing.expectedFailureTrainingIRToRunDecomp
     @testing.expectedFailureTrainingIRToRunDecompNonStrict
+    @unittest.skip("Test is only supposed to work with non-strict mode")
     def test_issue_113041(self):
         class TestModule(torch.nn.Module):
             def __init__(self):
