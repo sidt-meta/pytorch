@@ -152,8 +152,8 @@ NON_STRICT_SUFFIX = "_non_strict"
 RETRACEABILITY_SUFFIX = "_retraceability"
 SERDES_SUFFIX = "_serdes"
 PREDISPATCH_SUFFIX = "_pre_dispatch"
-TRAINING_IR_DECOMP_SUFFIX = "_training_ir_to_decomp"
-TRAINING_IR_DECOMP_NS_SUFFIX = "_training_ir_to_decomp_non_strict"
+TRAINING_IR_DECOMP_STRICT_SUFFIX = "_training_ir_to_decomp"
+TRAINING_IR_DECOMP_NON_STRICT_SUFFIX = "_training_ir_to_decomp_non_strict"
 
 
 def is_non_strict_test(test_name):
@@ -169,8 +169,8 @@ def is_serdes_test(test_name):
 
 
 def is_training_ir_test(test_name):
-    return test_name.endswith(TRAINING_IR_DECOMP_SUFFIX) or test_name.endswith(
-        TRAINING_IR_DECOMP_NS_SUFFIX
+    return test_name.endswith(TRAINING_IR_DECOMP_STRICT_SUFFIX) or test_name.endswith(
+        TRAINING_IR_DECOMP_NON_STRICT_SUFFIX
     )
 
 

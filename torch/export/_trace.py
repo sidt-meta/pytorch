@@ -1576,6 +1576,7 @@ def _non_strict_export(
                 log.debug("Exported program from AOTAutograd:\n%s", gm)
 
             if sig is not None:
+                assert not _is_training, "graph signature should be None for training IR"
                 sig.parameters = pytree.tree_map(_strip_root, sig.parameters)
                 sig.buffers = pytree.tree_map(_strip_root, sig.buffers)
                 sig.inputs_to_buffers = pytree.tree_map(_strip_root, sig.inputs_to_buffers)
@@ -1583,6 +1584,9 @@ def _non_strict_export(
                     _strip_root, sig.inputs_to_parameters
                 )
                 sig.buffers_to_mutate = pytree.tree_map(_strip_root, sig.buffers_to_mutate)
+            else:
+                # TODO(pianpwk): clean up _make_fx_helper() so we don't have these checks
+                assert _is_training, "graph signature can be None only for training IR"
 
             for node in gm.graph.nodes:
                 if "nn_module_stack" in node.meta:
