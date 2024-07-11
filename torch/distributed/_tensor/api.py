@@ -15,6 +15,7 @@ from torch.distributed._tensor._redistribute import (
 )
 from torch.distributed._tensor._utils import compute_global_tensor_info
 from torch.distributed._tensor.placement_types import (
+    _StridedShard,
     DTensorSpec,
     Partial,
     Placement,
@@ -649,6 +650,52 @@ def distribute_tensor(
         # 1. if the we can further shard this DTensor if the two device mesh belong to
         #   the same parenet mesh and further sharding is possible.
         # 2. check if device mesh and placements are the same
+
+        # use case: nested distribute_tensor() over 1-d mesh for composable parallelisms
+        if (
+            len(placements) == 1
+            and placements[0].is_shard()
+            and device_mesh.ndim == 1
+            and _mesh_resources.get_parent_mesh(tensor.device_mesh)
+            == _mesh_resources.get_parent_mesh(device_mesh)
+        ):
+            placement = placements[0]
+            shard_dim = cast(Shard, placement).dim
+            # check if the tensor dim has been sharded
+            if tensor._spec.dim_map[shard_dim] != -1:
+                split_factor = tensor._spec.num_shards_map[shard_dim]
+                # perform contiguous sharding
+                # TODO: check if tensor is a leaf tensor
+                local_tensor = tensor.to_local().detach()
+                local_tensor = placement._shard_tensor(local_tensor, device_mesh, 0)
+                # TODO: construct DTensorSpec
+                # note: how to construct the new device mesh???
+                # silice the parent mesh
+                mesh_dim = _mesh_resources.get_parent_mesh_dim(device_mesh)
+                assert mesh_dim is not None
+                parent_device_mesh = _mesh_resources.get_parent_mesh(tensor.device_mesh)
+                parent_device_mesh_dim_names = parent_device_mesh.mesh_dim_names
+                new_device_mesh = parent_device_mesh[parent_device_mesh_dim_names[mesh_dim:]]
+
+                assert local_tensor is not None, "distributing a tensor should not be None"
+                spec = DTensorSpec(
+                    mesh=new_device_mesh,
+                    placements=(
+                        _StridedShard(shard_dim, split_factor=split_factor),
+                        *tensor.placements,
+                    ),
+                    tensor_meta=TensorMeta(
+                        shape=tensor.size(),
+                        stride=tensor.stride(),
+                        dtype=tensor.dtype,
+                    ),
+                )
+                return DTensor(
+                    local_tensor.requires_grad_(tensor.requires_grad),
+                    spec,
+                    requires_grad=tensor.requires_grad,
+                )
+
         if tensor.device_mesh != device_mesh:
             raise ValueError(
                 f"Cannot distribute a DTensor with device mesh {tensor.device_mesh} "
