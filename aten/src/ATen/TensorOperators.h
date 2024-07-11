@@ -34,13 +34,13 @@ namespace at {
   _(!=, x.ne(y), y.ne(x))
 
 #define DEFINE_OPERATOR(op, body, reverse_scalar_body)                 \
-  static inline Tensor operator op(const Tensor& x, const Tensor& y) { \
+  inline Tensor operator op(const Tensor& x, const Tensor& y) { \
     return body;                                                       \
   }                                                                    \
-  static inline Tensor operator op(const Tensor& x, const Scalar& y) { \
+  inline Tensor operator op(const Tensor& x, const Scalar& y) { \
     return body;                                                       \
   }                                                                    \
-  static inline Tensor operator op(const Scalar& x, const Tensor& y) { \
+  inline Tensor operator op(const Scalar& x, const Tensor& y) { \
     return reverse_scalar_body;                                        \
   }
 
