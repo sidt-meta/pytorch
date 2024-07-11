@@ -1576,14 +1576,20 @@ def _non_strict_export(
                 log.debug("Exported program from AOTAutograd:\n%s", gm)
 
             if sig is not None:
-                assert not _is_training, "graph signature should be None for training IR"
+                assert (
+                    not _is_training
+                ), "graph signature should be None for training IR"
                 sig.parameters = pytree.tree_map(_strip_root, sig.parameters)
                 sig.buffers = pytree.tree_map(_strip_root, sig.buffers)
-                sig.inputs_to_buffers = pytree.tree_map(_strip_root, sig.inputs_to_buffers)
+                sig.inputs_to_buffers = pytree.tree_map(
+                    _strip_root, sig.inputs_to_buffers
+                )
                 sig.inputs_to_parameters = pytree.tree_map(
                     _strip_root, sig.inputs_to_parameters
                 )
-                sig.buffers_to_mutate = pytree.tree_map(_strip_root, sig.buffers_to_mutate)
+                sig.buffers_to_mutate = pytree.tree_map(
+                    _strip_root, sig.buffers_to_mutate
+                )
             else:
                 # TODO(pianpwk): clean up _make_fx_helper() so we don't have these checks
                 assert _is_training, "graph signature can be None only for training IR"
@@ -1636,7 +1642,7 @@ def _non_strict_export(
                     _is_torch_jit_trace=_is_torch_jit_trace,
                 )
             )
-            aten_export_artifact = _to_aten_func(
+            aten_export_artifact = _to_aten_func(  # type: ignore[operator]
                 patched_mod,
                 new_fake_args,
                 new_fake_kwargs,
@@ -1688,7 +1694,6 @@ def _export_for_training(
     strict: bool = True,
     preserve_module_call_signature: Tuple[str, ...] = (),
 ) -> ExportedProgram:
-
     if not isinstance(args, tuple):
         raise UserError(
             UserErrorType.INVALID_INPUT,
@@ -1718,7 +1723,7 @@ def _export_for_training(
             _is_training=True,
         )
     )
-    export_artifact = export_func(
+    export_artifact = export_func(  # type: ignore[operator]
         mod=mod,
         args=args,
         kwargs=kwargs,
