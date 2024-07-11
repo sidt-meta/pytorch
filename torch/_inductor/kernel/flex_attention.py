@@ -399,7 +399,7 @@ def create_num_blocks_fake_generator(sparse_indices):
     # If it's too short then prefetching won't help. If it's too long then
     # autotuning will take longer for no good reason.
     def create_num_blocks_fake(x) -> torch.Tensor:
-        num_blocks_for_autotuning = min(16, sparse_indices.shape[-1])
+        num_blocks_for_autotuning = min(16, sparse_indices.shape[-1] - 1)
         return torch.full(
             x.get_size(),
             int(num_blocks_for_autotuning),
@@ -763,7 +763,7 @@ flex_attention_backward_template = TritonTemplate(
             # Increment pointers.
             indices_idx = start_n // SPARSE_KV_MULTIPLE
             cur_block = tl.load(kv_indices + indices_idx)
-            next_block = tl.load(kv_indices + indices_idx + 1)
+            next_block = tl.load(kv_indices + indices_idx + 1, mask=indices_idx + 1 < sparse_kv_num_blocks)
             needs_jump = (start_n + 1) % SPARSE_KV_MULTIPLE == 0
             jump_to_block = (next_block - cur_block ) * SPARSE_KV_BLOCK_SIZE - (SPARSE_KV_MULTIPLE - 1) * BLOCK_N2
             offset = jump_to_block * needs_jump + (1 - needs_jump) * BLOCK_N2
@@ -870,7 +870,7 @@ flex_attention_backward_template = TritonTemplate(
             # Increment pointers.
             indices_idx = start_m // SPARSE_Q_MULTIPLE
             cur_block = tl.load(q_indices + indices_idx)
-            next_block = tl.load(q_indices + indices_idx + 1)
+            next_block = tl.load(q_indices + indices_idx + 1, mask=indices_idx + 1 < sparse_q_num_blocks)
             needs_jump = (start_m + 1) % SPARSE_Q_MULTIPLE == 0
             jump_to_block = (next_block - cur_block ) * SPARSE_Q_BLOCK_SIZE - (SPARSE_Q_MULTIPLE - 1) * BLOCK_M1
             offset = jump_to_block * needs_jump + (1 - needs_jump) * BLOCK_M1
@@ -980,13 +980,18 @@ def flex_attention_backward(*args, **kwargs):
     configs: List[Tuple[int, int, int, int]] = []
     configs.append(_get_default_config_bwd(query))
     if config.max_autotune:
-        for BLOCK1 in [32, 64]:
-            for BLOCK2 in [32, 64, 128]:
-                if BLOCK2 % BLOCK1 != 0:
-                    continue
-                for w in [4, 8]:
-                    for s in [1, 3, 4, 5]:
-                        configs.append((BLOCK1, BLOCK2, w, s))
+
+        def generate_configs():
+            return [
+                (BLOCK1, BLOCK2, w, s)
+                for BLOCK1 in [32, 64]
+                for BLOCK2 in [32, 64, 128]
+                for w in [4, 8]
+                for s in [1, 3, 4, 5]
+                if BLOCK2 % BLOCK1 == 0
+            ]
+
+        configs.extend(generate_configs())
 
     for BLOCK1, BLOCK2, num_warps, num_stages in configs:
         if (
