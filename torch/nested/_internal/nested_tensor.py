@@ -4,7 +4,6 @@ from typing import Tuple
 import torch
 from torch._C import DispatchKey, DispatchKeySet
 from torch._prims_common import is_expandable_to
-from torch.fx.experimental.symbolic_shapes import has_free_symbols
 from torch.utils.weak import WeakTensorKeyDictionary
 from typing import *  # noqa: F403
 
@@ -16,8 +15,24 @@ def get_tensor_symint(tensor, *, coeff=1):
     global _tensor_id_counter
     tensor_symint = _tensor_symint_registry.get(tensor)
     if tensor_symint is None:
+        from torch._subclasses.fake_tensor import FakeTensor
+        from torch._subclasses.functional_tensor import FunctionalTensor
+        from torch.fx.experimental.symbolic_shapes import _create_symbolic_nested_int
+
+        if isinstance(tensor, FunctionalTensor):
+            tensor = torch._from_functional_tensor(tensor.elem)
+            return get_tensor_symint(tensor, coeff=coeff)
+
+        # allocate new nested int
         tensor_symint = torch._C._get_nested_int(_tensor_id_counter, coeff)
         _tensor_id_counter += 1
+
+        if isinstance(tensor, FakeTensor):
+            tensor_symint = _create_symbolic_nested_int(
+                tensor_symint, tensor.source, tensor.fake_mode.shape_env
+            )
+
+        # associate (possibly symbolic) nested int with this tensor in the registry
         _tensor_symint_registry[tensor] = tensor_symint
     return tensor_symint
 
@@ -254,16 +269,6 @@ class NestedTensor(torch.Tensor):
             metadata_cache["max_seqlen"] = max_seqlen_tensor
 
         ragged_idx = meta["ragged_idx"]
-
-        # Note that we cannot simply check if is_fake(values) because
-        # during aot autograd, FunctionalTensors are not fake but hold
-        # symbolic sizes.
-        ragged_source = offsets if lengths is None else lengths
-        if has_free_symbols(ragged_source) or has_free_symbols(values):
-            # Associate offsets or lengths (possibly fake, possibly functionalized)
-            # with the ragged_size.
-            ragged_size = outer_size[ragged_idx]
-            _tensor_symint_registry[ragged_source] = ragged_size
 
         return NestedTensor(
             values,

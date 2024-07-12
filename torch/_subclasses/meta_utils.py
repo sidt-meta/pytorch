@@ -141,6 +141,17 @@ def is_sparse_any(t):
     return is_sparse_coo(t) or is_sparse_compressed(t)
 
 
+def update_nested_int_registry(r, nested_int, source, shape_env):
+    from torch.fx.experimental.symbolic_shapes import _create_symbolic_nested_int
+    from torch.nested._internal.nested_tensor import _tensor_symint_registry
+
+    if r in _tensor_symint_registry:
+        return
+
+    sym_nested_int = _create_symbolic_nested_int(nested_int, source, shape_env)
+    _tensor_symint_registry[r] = sym_nested_int
+
+
 # Don't use id() directly, because those can get reallocated over time.
 MetaStorageId: TypeAlias = int
 MetaTensorId: TypeAlias = int
@@ -299,6 +310,8 @@ class MetaTensorDescriber:
             }
             type_v = type(t)
 
+        from torch.nested._internal.nested_tensor import _tensor_symint_registry
+
         # TODO: Is it important to enable torch.inference_mode before querying
         # these values?
         r = MetaTensorDesc(
@@ -327,6 +340,7 @@ class MetaTensorDescriber:
             is_parameter=isinstance(t, torch.nn.Parameter),
             is_traceable_wrapper_subclass=is_traceable_wrapper_subclass_v,
             is_nested=is_nested,
+            nested_int=_tensor_symint_registry.get(t, None),
             is_functional=is_functional,
             layout=layout,
             device=t.device,
@@ -451,6 +465,8 @@ class MetaTensorDesc:
     is_gradtrackingtensor: bool = False
     is_view: bool = False
     is_nested: bool = False
+    # associated nested int for e.g. offsets / lengths metadata
+    nested_int: Optional[int] = None
     is_traceable_wrapper_subclass: bool = False
     is_functional: bool = False
     is_conj: bool = False
@@ -490,6 +506,7 @@ class MetaTensorDesc:
         "functorch_stack",
         "autograd_meta_from",
         "data",
+        "nested_int",
     ]
 
     ctx: Optional[object] = None  # is_traceable_wrapper_subclass
@@ -801,13 +818,16 @@ class MetaConverter:
                 # We are hitting plain meta_desc tensor so actually
                 # create a tensor here.
                 if t.attrs is None:
-                    r = callback(
-                        lambda: empty_create(
-                            t,
-                            source,
-                            symbolic_context,
+                    # NB: prefer using a cached memo entry if one exists
+                    r = self.get_tensor_memo(t)
+                    if r is None:
+                        r = callback(
+                            lambda: empty_create(
+                                t,
+                                source,
+                                symbolic_context,
+                            )
                         )
-                    )
                     if self.copy_data:
                         with torch.no_grad(), no_dispatch():
                             r.real_tensor = torch.empty_strided(
@@ -818,6 +838,12 @@ class MetaConverter:
                             )
                             assert t.data is not None
                             _safe_copy(r.real_tensor, t.data)
+
+                    if t.nested_int is not None:
+                        update_nested_int_registry(r, t.nested_int, source, shape_env)
+
+                    self.set_tensor_memo(t, r)
+
                     return r
 
                 inner_tensors = {}
@@ -1559,6 +1585,9 @@ class MetaConverter:
 
             if t.is_parameter:
                 r._is_param = True
+
+            if t.nested_int is not None:
+                update_nested_int_registry(r, t.nested_int, source, shape_env)
 
             self.set_tensor_memo(t, r)
 

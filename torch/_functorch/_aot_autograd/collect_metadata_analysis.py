@@ -160,7 +160,10 @@ def run_functionalized_fw_and_collect_metadata(
         with disable_above, mode:
             # precondition: The passed in function already handles unflattening inputs + flattening outputs
             flat_f_args = pytree.tree_map(_to_fun, flat_args)
+
+            tmp_counter = torch.nested._internal.nested_tensor._tensor_id_counter
             flat_f_outs = f(*flat_f_args)
+            torch.nested._internal.nested_tensor._tensor_id_counter = tmp_counter
             # We didn't do any tracing, so we don't need to process the
             # unbacked symbols, they will just disappear into the ether.
             # Also, prevent memoization from applying.
@@ -628,7 +631,16 @@ from a multi-output view call"
                     t, lambda _, inner_t: view_avoid_dupes_with_primals(inner_t)
                 )
             if isinstance(t, Tensor):
-                return t.view(t.shape)
+                out = t.view(t.shape)
+
+                # indicate that the viewed tensor has the same associated nested int
+                # as the source tensor within the nested int registry
+                from torch.nested._internal.nested_tensor import _tensor_symint_registry
+
+                if t in _tensor_symint_registry:
+                    _tensor_symint_registry[out] = _tensor_symint_registry[t]
+
+                return out
             return t
 
         # This analysis function returns *only* the outputs that are meant to be tangents to the backwards.
