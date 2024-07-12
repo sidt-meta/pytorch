@@ -9,7 +9,10 @@ import torch
 import torch._dynamo.testing
 import torch.distributed._composable.fsdp._fsdp_param
 from torch import nn
+from torch._C import FileCheck
 from torch._dynamo import compiled_autograd
+from torch._inductor import comms
+from torch._inductor.utils import run_and_get_triton_code
 
 from torch.distributed._composable.fsdp import fully_shard
 from torch.distributed._composable.fsdp._fsdp_common import TrainingState
@@ -23,6 +26,10 @@ from torch.testing._internal.distributed._tensor.common_dtensor import (
     Transformer,
 )
 from torch.utils._triton import has_triton
+
+
+def _is_op_in_graph(graph, op):
+    return any(node.target is op for node in graph.nodes)
 
 
 class TestFullyShardCompileCompute(FSDPTest):
@@ -133,6 +140,40 @@ class TestFullyShardCompile(FSDPTest):
         torch.compile(f, backend="aot_eager")(x)
         self.assertEqual(x, ref_x)
 
+    def _reinplace_all_gather_with_checks(self, graph, original_func):
+        self.assertTrue(
+            _is_op_in_graph(
+                graph,
+                torch.ops._c10d_functional.all_gather_into_tensor.default,
+            )
+        )
+        original_func(graph)
+        self.assertFalse(
+            _is_op_in_graph(
+                graph,
+                torch.ops._c10d_functional.all_gather_into_tensor.default,
+            )
+        )
+        self.assertTrue(
+            _is_op_in_graph(
+                graph,
+                torch.ops._c10d_functional.all_gather_into_tensor_out.default,
+            )
+        )
+
+    @contextlib.contextmanager
+    def _patch_reinplace_fsdp_all_gather(self):
+        original_func = comms.reinplace_fsdp_all_gather
+
+        def wrapper(graph):
+            return self._reinplace_all_gather_with_checks(graph, original_func)
+
+        comms.reinplace_fsdp_all_gather = wrapper
+        try:
+            yield
+        finally:
+            comms.reinplace_fsdp_all_gather = original_func
+
     @torch._dynamo.config.patch(inline_inbuilt_nn_modules=True)
     @torch._functorch.config.patch(recompute_views=True)
     @torch._functorch.config.patch(cse=False)
@@ -167,7 +208,14 @@ class TestFullyShardCompile(FSDPTest):
                     loss.backward()
                 optim.step()
                 optim.zero_grad(set_to_none=True)
-            return losses
+            code = None
+            if backend == "inductor" and compiled_autograd_backend is not None:
+                maybe_compiled_autograd_ctx = compiled_autograd.enable(
+                    compiler_fn(compiled_autograd_backend)
+                )
+                with maybe_compiled_autograd_ctx:
+                    code = run_and_get_triton_code(model, input_creation_fn())
+            return losses, code
 
         def test_compiled():
             model, optim = model_init_fn()
@@ -175,18 +223,21 @@ class TestFullyShardCompile(FSDPTest):
             run_iters(model, optim, n_iter=1)
 
             model_compiled = torch.compile(model, backend=backend, fullgraph=True)
-            res = run_iters(model_compiled, optim, compiled_autograd_backend=backend)
-            return res
+            res, code = run_iters(
+                model_compiled, optim, compiled_autograd_backend=backend
+            )
+
+            return res, code
 
         def test_eager():
             model, optim = model_init_fn()
             # FSDP2 does lazy init using 1st run, so run it once to init using eager mode
             run_iters(model, optim, n_iter=1)
 
-            res = run_iters(model, optim)
+            res, _ = run_iters(model, optim)
             return res
 
-        losses_compiled = test_compiled()
+        losses_compiled, code = test_compiled()
         losses_eager = test_eager()
         for loss_compiled, loss_eager in zip(losses_compiled, losses_eager):
             self.assertTrue(
@@ -198,6 +249,7 @@ class TestFullyShardCompile(FSDPTest):
                 ),
                 f"{loss_compiled} vs {loss_eager}",
             )
+        return code
 
     def _create_simple_mlp_factory_fns(self):
         hidden_dim = 16
@@ -298,8 +350,12 @@ class TestFullyShardCompile(FSDPTest):
     # TODO: native_dropout causes CUDA IMA error, need to figure out why
     @torch._inductor.config.patch(fallback_random=True)
     def test_transformer_fullgraph_backend_inductor(self):
-        self._test_traceable_fsdp(
-            *self._create_transformer_factory_fns(), "inductor", fullgraph=True
+        with self._patch_reinplace_fsdp_all_gather():
+            code = self._test_traceable_fsdp(
+                *self._create_transformer_factory_fns(), "inductor", fullgraph=True
+            )
+        FileCheck().check("torch.ops._c10d_functional.all_gather_into_tensor_out.").run(
+            code
         )
 
 
