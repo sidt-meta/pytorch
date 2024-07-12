@@ -13,8 +13,8 @@ from torch import _utils_internal
 from torch._functorch.pyfunctorch import dispatch_functorch
 from torch.utils._python_dispatch import TorchDispatchMode
 
-# Query `hasattr` only once.
 
+# Query `hasattr` only once.
 _SET_GLOBAL_FLAGS = hasattr(sys, "getdlopenflags") and hasattr(sys, "setdlopenflags")
 
 
@@ -625,7 +625,9 @@ class OpOverload(OperatorBase):
         self._lazy_handle = None
 
         # If the OpOverload was constructed from a Library.def in Python.
-        self._defined_in_python = self.__qualname__ in torch.library._defs
+        from torch.library import _defs as _library_defs
+
+        self._defined_in_python = self.__qualname__ in _library_defs
 
         # Logic replicated from aten/src/ATen/native/MathBitsFallback.h
         is_write = None
