@@ -1360,7 +1360,7 @@ if(NOT INTERN_BUILD_MOBILE)
         endif()
         string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler -Wno-unused-but-set-parameter")
       endif()
-      string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler -Wno-sign-compare -Xcompiler -Wno-unused-parameter -Xcompiler -Werror")
+      string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler -Wno-sign-compare -Xcompiler -Wno-unused-function -Xcompiler -Wno-unused-parameter -Xcompiler -Werror")
     endif()
   endif()
 
