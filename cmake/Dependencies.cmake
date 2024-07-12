@@ -1357,7 +1357,7 @@ if(NOT INTERN_BUILD_MOBILE)
       if(CMAKE_COMPILER_IS_GNUCXX AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
         string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler -Wno-dangling-reference")
       endif()
-      string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler -Wno-sign-compare -Xcompiler -Werror")
+      string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler -Wno-sign-compare -Xcompiler -Wno-unused-but-set-parameter -Xcompiler -Werror")
     endif()
   endif()
 
